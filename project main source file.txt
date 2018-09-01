@@ -1,0 +1,319 @@
+#lang racket
+(require 2htdp/universe 2htdp/image)
+(require rsound)
+
+;; Constants used in the game
+
+(define WIDTH 840)
+(define HEIGHT 680)
+(define MOVE-DELTA 20)
+(define TICK-SETTING .005)
+(define PAUSED? #f)
+
+(define BALL (circle 16 "solid" "red"))
+(define LEFT-PADDLE (rectangle 16 100 "solid" "green"))
+(define RIGHT-PADDLE (rectangle 16 100 "solid" "blue"))
+
+;; Images used in the game
+
+(define ib (bitmap "bkim.jpg"))
+
+;; Initial state for single-player
+
+(define start-vector-state (vector (/ WIDTH 2) (/ HEIGHT 2) -1 1 (/ WIDTH 2) (/ HEIGHT 2)))
+
+(define (ball-x vec-state) (vector-ref vec-state 0))
+(define (ball-y vec-state) (vector-ref vec-state 1))
+(define (ball-vel-x vec-state) (vector-ref vec-state 2))
+(define (ball-vel-y vec-state) (vector-ref vec-state 3))
+(define (left-paddle-y vec-state) (vector-ref vec-state 4))
+(define (right-paddle-y vec-state) (vector-ref vec-state 5))
+
+;; Check whether the ball is colliding with left-paddle or not
+
+(define (collision-left? vec-state)
+  (define (within? n target dist)
+	(and (>= n (- target dist)) (<= n (+ target dist))))
+   (and (equal? (ball-x vec-state) 32)
+       	(within? (ball-y vec-state) (left-paddle-y vec-state) 50)))
+
+;; Check whether the ball is colliding with right-paddle or not
+
+(define (collision-right? vec-state)
+   (define (within? n target dist)
+	(and (>= n (- target dist)) (<= n (+ target dist))))
+  	(and (equal? (ball-x vec-state) (- WIDTH 32))
+       	(within? (ball-y vec-state) (right-paddle-y vec-state) 50)))
+
+;; Checks whether ball goes out of the left paddle
+
+(define (off-limits-left? vec-state)
+  (<= (ball-x vec-state) (+ 15 (- 0 (ball-vel-x vec-state)))))
+
+;; Checks whether ball goes out of the right paddle
+
+(define (off-limits-right? vec-state)
+  (>= (ball-x vec-state) (- WIDTH (+ 15 (ball-vel-x vec-state)))))
+
+;; Just Check that it goes out or not
+
+(define (off-limits? vec-state)
+  (or (off-limits-left? vec-state) (off-limits-right? vec-state)))
+
+;; After every tick it updates the positon of the moving ball
+
+(define (move-ball vec-state)
+  (begin
+	(vector-set! vec-state 0 (+ (ball-x vec-state) (ball-vel-x vec-state)))
+	(vector-set! vec-state 1 (+ (ball-y vec-state) (ball-vel-y vec-state)))
+	vec-state))
+
+;; Checks whether the ball is in the range of paddle or not
+
+(define (range? n target dist)
+	(and (>= n (- target dist)) (<= n (+ target dist))))
+
+;; Returns initial speed of the ball
+
+(define (original speed)
+  (cond [(< speed 0) -1]
+    	[else 1]))
+
+;; Controls the speed of the ball after every collision depending upon the region
+;; where ball is colliding
+
+(define (ball-on-wall-paddle vec-state)
+  (if PAUSED?   vec-state
+  	(move-ball
+   	(cond
+     	[(collision-left? vec-state)
+       	(cond [(range? (ball-y vec-state) (left-paddle-y vec-state) 20)
+      	(begin  (vector-set! vec-state 2 (* -1 (original (ball-vel-x vec-state))))
+              	(play clap-2)
+              	vec-state)]
+             	[(and (range? (ball-y vec-state) (left-paddle-y vec-state) 40)
+                        	(not (range? (ball-y vec-state) (left-paddle-y vec-state) 20)))
+        	(begin (vector-set! vec-state 2 (* -2 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)]
+             	[(and  (range? (ball-y vec-state) (left-paddle-y vec-state) 50)
+                      	(not (range? (ball-y vec-state) (left-paddle-y vec-state) 40)))
+       	(begin   (vector-set! vec-state 2 (* -3 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)])]
+     	[(collision-right? vec-state)
+      	(begin  (vector-set! vec-state 2 (* -1 (ball-vel-x vec-state)))
+              	(play clap-2)
+              	vec-state)]
+     	[(or (equal? (ball-y vec-state) 16)
+          	(equal? (ball-y vec-state) (- HEIGHT 16)))
+     	(begin (vector-set! vec-state 3 (* -1 (ball-vel-y vec-state)))
+            	vec-state)]
+     	[else vec-state]))))
+
+;; Update the position of left-player in response to the key pressed
+
+(define (player1 vec-state a)
+  (if PAUSED?   vec-state
+	(begin  (vector-set! vec-state 4 (max 50 (min (- HEIGHT 50) (+ a (left-paddle-y vec-state)))))
+                	vec-state	)))
+
+;; Pauses the game on pressing of "p" key
+
+(define (toggle-pause vec-state)
+  (set! PAUSED? (not PAUSED?))
+  vec-state)
+
+;; Key-Handling for single player
+
+(define (key-handling-1 vec-state a-key)
+  (cond
+	[(key=?  a-key "up") (player1 vec-state (- MOVE-DELTA))]
+	[(key=?  a-key "down") (player1 vec-state (+ MOVE-DELTA))]
+	[(key=?  a-key "p") (toggle-pause vec-state)]
+	[else vec-state]))
+
+;; Auto-movement of right player in single-player mode
+
+(define (player-2-computer vec-state)
+  (begin (vector-set! vec-state 5 (ball-y vec-state))
+     	vec-state))
+
+;; Update the current scenario of game
+
+(define (world-step vec-state)
+  (player-2-computer (ball-on-wall-paddle vec-state)))
+
+;; Initial Display Window for single-player mode
+
+(define (display-game vec-state)
+  (place-image
+   BALL (ball-x vec-state) (ball-y vec-state)
+   (place-image
+	LEFT-PADDLE 8 (left-paddle-y vec-state)
+	(place-image
+ 	RIGHT-PADDLE (- WIDTH 8) (right-paddle-y vec-state)
+ 	(add-line(empty-scene WIDTH HEIGHT "black" )  420 0 420 680   (make-pen "white" 6 "long-dash" "round" "round") )))))
+
+;; Game-Over Text For Single-Player
+
+(define (game-over-text-1 w)
+  (place-image (text/font "GAME  OVER" 50 "Indigo" #f 'modern 'italic 'normal #f) 420 300
+           	(place-image (text/font "You Lose" 40 "Indigo" #f 'modern 'italic 'normal #f) 420 360
+           	(display-game w))))
+
+;; big-bang for single-player mode
+
+(define (single-player vec-state)
+  (big-bang vec-state
+        	(to-draw display-game)
+        	(on-key key-handling-1)
+        	(on-tick world-step TICK-SETTING)
+        	(stop-when off-limits-left? game-over-text-1)))
+
+;; Initial State for multi-player
+
+(define start-vector-state-2 (vector (/ WIDTH 2) (/ HEIGHT 2) -1 1 (/ WIDTH 2) (/ HEIGHT 2)))
+
+;; Controlling the speed of the ball after every collision with the paddles
+
+(define (ball-on-wall-paddle-2 vec-state)
+  (if PAUSED?   vec-state
+  	(move-ball
+   	(cond
+     	[(collision-left? vec-state)
+       	(cond [(range? (ball-y vec-state) (left-paddle-y vec-state) 20)
+      	(begin  (vector-set! vec-state 2 (* -1 (original (ball-vel-x vec-state))))
+              	(play clap-2)
+              	vec-state)]
+             	[(and (range? (ball-y vec-state) (left-paddle-y vec-state) 40)
+                        	(not (range? (ball-y vec-state) (left-paddle-y vec-state) 20)))
+        	(begin (vector-set! vec-state 2 (* -2 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)]
+             	[(and  (range? (ball-y vec-state) (left-paddle-y vec-state) 50)
+                      	(not (range? (ball-y vec-state) (left-paddle-y vec-state) 40)))
+       	(begin   (vector-set! vec-state 2 (* -3 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)])]
+     	[(collision-right? vec-state)
+       	(cond [(range? (ball-y vec-state) (right-paddle-y vec-state) 20)
+      	(begin  (vector-set! vec-state 2 (* -1 (original (ball-vel-x vec-state))))
+              	(play clap-2)
+              	vec-state)]
+             	[(and (range? (ball-y vec-state) (right-paddle-y vec-state) 40)
+                        	(not (range? (ball-y vec-state) (right-paddle-y vec-state) 20)))
+        	(begin (vector-set! vec-state 2 (* -2 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)]
+             	[(and  (range? (ball-y vec-state) (right-paddle-y vec-state) 50)
+                      	(not (range? (ball-y vec-state) (right-paddle-y vec-state) 40)))
+       	(begin   (vector-set! vec-state 2 (* -3 (original (ball-vel-x vec-state))))
+               	(play clap-2)
+               	vec-state)])]  	 
+     	[(or (equal? (ball-y vec-state) 16)
+          	(equal? (ball-y vec-state) (- HEIGHT 16)))
+     	(begin (vector-set! vec-state 3 (* -1 (ball-vel-y vec-state)))
+            	vec-state)]
+     	[else vec-state]))))
+
+;; Update the position of player 1
+
+(define (mult-player1 vec-state a)
+  (if PAUSED?   vec-state
+	(begin (vector-set! vec-state 4 (max 50 (min (- HEIGHT 50) (+ a (left-paddle-y vec-state)))))
+        	vec-state)))
+;; Pauses the game in multiplayer mode
+
+(define (mult-toggle-pause vec-state)
+  (set! PAUSED? (not PAUSED?))
+  vec-state)
+
+;; Update the position of player 2
+
+(define (mult-player2 vec-state b)
+  (if PAUSED? vec-state
+   (begin (vector-set! vec-state 5 (max 50 (min (- HEIGHT 50) (+ b (right-paddle-y vec-state)))))
+      	vec-state)))
+
+;; Update the current scenario of the game
+
+(define (world-step-2 vec-state-2)
+  (ball-on-wall-paddle-2 vec-state-2))
+
+;; Key-Handling for multi-player
+
+(define (key-handling-2 vec-state a-key)
+  (cond
+	[(key=?  a-key "w") (mult-player1 vec-state (- MOVE-DELTA))]
+	[(key=?  a-key "s") (mult-player1 vec-state (+ MOVE-DELTA))]
+	[(key=?  a-key "up") (mult-player2 vec-state (- MOVE-DELTA))]
+	[(key=?  a-key "down") (mult-player2 vec-state (+ MOVE-DELTA))]
+	[(key=?  a-key "p") (mult-toggle-pause vec-state)]
+	[else vec-state]))
+
+;; Game Over Text For Multi-Player
+
+(define (game-over-text-2 w)
+  (cond [(off-limits-left? w) (place-image (text/font "GAME  OVER" 50 "red" #f 'modern 'italic 'normal #f) 420 300
+           	(place-image (text/font "Right Player Won" 30 "red" #f 'modern 'italic 'normal #f) 420 360
+           	(display-game w)))]
+    	[(off-limits-right? w) (place-image (text/font "GAME  OVER" 50 "red" #f 'modern 'italic 'normal #f) 420 300
+           	(place-image (text/font "Left Player Won" 30 "red"  #f 'modern 'italic 'normal #f) 420 360
+           	(display-game w)))]))
+
+;; big-bang for multi-player mode
+
+(define (mult-player vec-state-2)
+  (big-bang vec-state-2
+        	(to-draw display-game)
+        	(on-key key-handling-2)
+        	(on-tick world-step-2 TICK-SETTING)
+        	(stop-when off-limits? game-over-text-2)))
+
+;; Initial screen for the Instruction
+
+(define (initial-state state)
+  (define choice1 "Press 1 for single player")
+  (define choice2 "Press 2 for multiplayer")
+  (define instruction1a " In single-player mode Use ")
+  (define instruction1b " 'up/down' key for movement of the paddle ")
+  (define instruction2a " In multi-player mode Use 'w/s' key and 'up/down' ")
+  (define instruction2b " key for movement of left and right paddle respectively ")
+  (define instruction3 " Press 'p' to pause the game")
+  (define c1 (text choice1 30 "black"))
+  (define c2 (text choice2 30 "black"))
+  (define t1a (text instruction1a 30 "black"))
+  (define t1b (text instruction1b 30 "black"))
+  (define t2a (text instruction2a 30 "black"))
+  (define t2b (text instruction2b 30 "black"))
+  (define t3 (text instruction3 30 "black"))
+  (define scene-menu (place-image c1 420 60
+                                           	(place-image c2 420 120
+                                                        	(place-image t1a 420 180
+                                                                     	(place-image t1b 420 220
+                                                                                  	(place-image t2a 420 280
+                                                                                               	(place-image t2b 420 320
+                                                                                                            	(place-image t3 420 380
+                                                                                                                         	(place-image ib 420 340
+                                                                                                                                      	(empty-scene 840 680))))))))))
+  scene-menu)
+
+;; Initial State for the Instruction calling big-bang which is empty
+
+(define frame '())
+
+;; Key-handler for Instructions Menu
+
+(define (key-handler frame inp-key)
+  (cond
+	[(key=? inp-key "1") (single-player start-vector-state)]
+	[(key=? inp-key "2") (mult-player  start-vector-state-2)]
+	(else frame)))
+
+;; Instruction big-bang call
+
+(big-bang frame
+      	(to-draw initial-state)
+      	(on-key key-handler))
+
